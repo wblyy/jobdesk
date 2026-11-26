@@ -1,0 +1,385 @@
+// Operator console.
+// Wires the offline engine to the page: resume in, one job out, rewritten resume
+// out. No network calls after the initial dataset fetch.
+
+import * as JDLex from "./lexicon.js";
+window.JDLex = JDLex;
+await import("./engine.js");
+await import("./dataset.js");
+await import("./parse.js");
+await import("./message.js");
+
+const E = window.JDEngine;
+const D = window.JDData;
+const M = window.JDMessage;
+const R = window.JDResume;
+
+const $ = (id) => document.getElementById(id);
+const LOG_KEY = "jobdesk.log.v1";
+const SET_KEY = "jobdesk.settings.v1";
+
+const state = {
+  ds: null,           // { meta, jobs }
+  jobs: [],           // indexed
+  resume: null,       // parsed resume
+  scored: [],         // sorted scores
+  rank: 0,            // how far down the list the operator has clicked
+  rec: null,          // current score object
+  ev: null,           // evidence
+  rw: null,           // rewrite
+  log: [],            // this session's pushes [{company, title, at}]
+  ready: false,       // false until the job index is built
+};
+
+/* ---------------- small helpers ---------------- */
+
+let toastTimer = null;
+function toast(msg, ms) {
+  const el = $("toast");
+  el.textContent = msg;
+  el.classList.add("on");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("on"), ms || 2200);
+}
+
+async function copy(text, label) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast((label || "已复制") + "，可以直接粘到企微");
+  } catch (e) {
+    // clipboard API needs a secure context; fall back to a selection
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    toast(ok ? (label || "已复制") : "复制失败，手动选一下文字");
+  }
+}
+
+function ms(t) { return Math.round(t) + " ms"; }
+
+/* ---------------- settings + log ---------------- */
+
+function loadSettings() {
+  try { return JSON.parse(localStorage.getItem(SET_KEY) || "{}") || {}; } catch (e) { return {}; }
+}
+function saveSettings(patch) {
+  try { localStorage.setItem(SET_KEY, JSON.stringify({ ...loadSettings(), ...patch })); } catch (e) { /* quota */ }
+}
+
+function loadLog() {
+  try { return JSON.parse(localStorage.getItem(LOG_KEY) || "[]") || []; } catch (e) { return []; }
+}
+function saveLog() {
+  try { localStorage.setItem(LOG_KEY, JSON.stringify(state.log.slice(-60))); } catch (e) { /* quota */ }
+}
+function renderLog() {
+  const box = $("stepLog");
+  if (!state.log.length) { box.hidden = true; return; }
+  box.hidden = false;
+  $("logList").innerHTML = state.log.slice(-10).reverse().map((x) =>
+    `<li><b>${esc(x.company)}</b> · ${esc(x.title)}<span>${esc(x.at)}</span></li>`
+  ).join("");
+}
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+/* ---------------- dataset ---------------- */
+
+async function bootDataset() {
+  const custom = D.loadCustom();
+  const bundled = await D.loadBundled("data.jobs.json").catch(() => null);
+  const ds = custom || bundled;
+  if (!ds) {
+    $("dbInfo").textContent = "岗位库加载失败";
+    toast("岗位库加载失败，刷新试试");
+    return;
+  }
+  applyDataset(ds, custom ? "custom" : "bundled");
+}
+
+function applyDataset(ds, kind) {
+  const t0 = performance.now();
+  state.ds = ds;
+  state.jobs = ds.jobs.map((j) => E.indexJob(j));
+  const ms_ = performance.now() - t0;
+  const m = ds.meta || {};
+  $("dbInfo").textContent = `${m.count || ds.jobs.length} 个岗位 · ${m.built || "—"}${kind === "custom" ? " · 自建" : ""}`;
+  $("dbDetail").innerHTML = `
+    <p><b>${esc(m.name || "岗位库")}</b></p>
+    <p class="muted">${m.count || ds.jobs.length} 个岗位 ｜ 数据日期 ${esc(m.built || "未标注")} ｜ 来源 ${esc(m.source || "内置")}</p>
+    <p class="muted">已建立索引 ${ms(ms_)}</p>
+    <p class="muted">${kind === "custom" ? "正在用你自己导入的表格。" : "正在用随包附带的表格。"}</p>`;
+  saveSettings({ datasetKind: kind });
+  state.ready = true;
+  // a new database invalidates the current recommendation
+  state.scored = [];
+  state.rank = 0;
+  $("stepMatch").hidden = true;
+  $("stepRewrite").hidden = true;
+  document.body.classList.remove("booting");
+  if (state.resume) runMatch();
+}
+
+/* ---------------- resume ---------------- */
+
+async function takeFile(file) {
+  if (!file) return;
+  toast("正在读取 " + file.name);
+  try {
+    const out = await R.extract(file);
+    useResumeText(out.text, out.warning, file.name);
+  } catch (e) {
+    toast(e.message || "读不了这个文件", 4200);
+    if (e.code === "EMPTY") $("pasteWrap").open = true;
+  }
+}
+
+function useResumeText(text, warning, sourceName) {
+  text = String(text || "").trim();
+  if (text.length < 40) { toast("文字太少了，至少把经历和技能写上"); return; }
+  if (!state.ready) {
+    // A cold index takes about a second; queue the resume instead of dropping it.
+    toast("岗位库还在建索引，马上好");
+    setTimeout(() => useResumeText(text, warning, sourceName), 300);
+    return;
+  }
+  const t0 = performance.now();
+  const res = E.parseResume(text);
+  const parseMs = performance.now() - t0;
+  state.resume = res;
+  renderResumeInfo(res, sourceName, parseMs);
+  if (warning) toast(warning, 5000);
+  runMatch();
+}
+
+function renderResumeInfo(res, sourceName, parseMs) {
+  const i = res.info;
+  const roles = E.topRole(res).slice(0, 3).map((r) => E.LABEL.get(r.id)).filter(Boolean);
+  const bits = [];
+  if (i.name) bits.push("姓名 " + i.name);
+  if (i.degree) bits.push(i.degree);
+  if (i.gradYear) bits.push(i.gradYear + " 届");
+  if (i.days) bits.push("每周 " + i.days + " 天");
+  if (i.city) bits.push(i.city);
+  bits.push(res.bullets.length + " 条经历");
+  const box = $("resumeInfo");
+  box.hidden = false;
+  box.innerHTML = `
+    <div class="ri-top">
+      <span class="ri-file">${esc(sourceName || "粘贴的文字")}</span>
+      <span class="ri-time">读取 ${ms(parseMs)}</span>
+    </div>
+    <p class="ri-bits">${esc(bits.join(" ｜ "))}</p>
+    <p class="ri-roles">方向判定：${roles.length ? esc(roles.join("、")) : "没看出明确方向"}</p>
+    ${res.bullets.length < 3 ? `<p class="ri-warn">只认出 ${res.bullets.length} 条经历，匹配会不准。最好把「实习经历 / 项目经历」保留成单独的段落。</p>` : ""}`;
+}
+
+/* ---------------- matching ---------------- */
+
+function runMatch() {
+  if (!state.resume || !state.jobs.length) return;
+  const t0 = performance.now();
+  state.scored = state.jobs.map((j) => E.scoreJob(state.resume, j)).sort(byBest);
+  const ms_ = performance.now() - t0;
+  state.rank = 0;
+  showRank(ms_);
+}
+
+function byBest(a, b) {
+  if (b.fit !== a.fit) return b.fit - a.fit;
+  return (b.job.act || 0) - (a.job.act || 0);
+}
+
+// Company recently pushed in this session goes to the back, so two days in a row
+// do not land on the same employer.
+function recentlyPushed(job) {
+  return state.log.some((x) => x.company === job.c);
+}
+
+function showRank(ms_) {
+  const list = state.scored.slice();
+  if (state.log.length) {
+    list.sort((a, b) => {
+      const ra = recentlyPushed(a.job) ? 1 : 0;
+      const rb = recentlyPushed(b.job) ? 1 : 0;
+      if (ra !== rb) return ra - rb;
+      return byBest(a, b);
+    });
+  }
+  const sc = list[state.rank] || list[0];
+  if (!sc) return;
+  const t0 = performance.now();
+  const ev = E.explain(state.resume, sc, 3);
+  const evMs = performance.now() - t0;
+  state.rec = sc;
+  state.ev = ev;
+  state.rw = null;
+  renderRec(sc, ev);
+  $("stepMatch").hidden = false;
+  $("stepRewrite").hidden = true;
+  $("matchTiming").textContent = `匹配 ${ms(ms_)} · 找理由 ${ms(evMs)}`;
+  $("altNote").textContent = `第 ${state.rank + 1} / ${Math.min(list.length, 30)} 个候选。下一个：${esc(list[state.rank + 1] ? list[state.rank + 1].job.t : "没有了")}`;
+  $("btnNext").disabled = state.rank >= Math.min(list.length, 30) - 1;
+  $("stepMatch").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function renderRec(sc, ev) {
+  const j = sc.job;
+  // District and street address, not the whole scraped location cell: the
+  // operator reads this while typing to a candidate, and a mall address adds
+  // nothing to the decision.
+  const meta = [];
+  if (j.dist) meta.push(j.dist);
+  if (j.edu && j.edu !== "不限") meta.push(j.edu + "起");
+  const sched = M.schedText(j);
+  if (sched) meta.push(sched);
+  meta.push(M.salaryText(j));
+
+  const tier = sc.fit >= 0.75 ? "很对口" : sc.fit >= 0.6 ? "比较对口" : sc.fit >= 0.45 ? "可以试试" : "勉强";
+  const tierClass = sc.fit >= 0.75 ? "t-a" : sc.fit >= 0.6 ? "t-b" : sc.fit >= 0.45 ? "t-c" : "t-d";
+
+  const evHtml = ev.map((e) => `
+    <li>
+      <div class="ev-jd"><span class="ev-tag">JD</span>${esc(e.jd)}</div>
+      <div class="ev-res"><span class="ev-tag own">你</span>${esc(e.res)}</div>
+    </li>`).join("");
+
+  const miss = (ev.missing || []).length
+    ? `<p class="rec-miss"><b>JD 要、简历没写：</b>${esc(ev.missing.join("、"))}</p>` : "";
+
+  const caveats = (sc.caveats || []).length
+    ? `<ul class="rec-caveat">${sc.caveats.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>` : "";
+
+  $("rec").innerHTML = `
+    <div class="rec-top">
+      <div>
+        <h3>${esc(j.c)}</h3>
+        <p class="rec-title">${esc(j.t)}</p>
+      </div>
+      <span class="tier ${tierClass}">${tier}</span>
+    </div>
+    <p class="rec-meta">${esc(meta.join(" ｜ "))}</p>
+    <p class="rec-why"><b>为什么是它</b>${esc(M.whyLine(sc))}</p>
+    ${j.loc ? `<p class="rec-addr">${esc(j.loc)}</p>` : ""}
+    ${evHtml ? `<ul class="ev">${evHtml}</ul>` : `<p class="muted">JD 里没有能和你简历直接对上的一句。这条只能算方向对，推荐时别把话说满。</p>`}
+    ${miss}
+    ${caveats}
+  `;
+}
+
+/* ---------------- rewrite ---------------- */
+
+function doRewrite() {
+  if (!state.rec) return;
+  const t0 = performance.now();
+  const rw = E.rewrite(state.resume, state.rec.job, state.ev);
+  const ms_ = performance.now() - t0;
+  state.rw = rw;
+  $("resumeOut").textContent = rw.text;
+  $("changesOut").innerHTML = rw.changes.map((c) =>
+    `<div class="chg"><b>${esc(c.k)}</b><p>${esc(c.v)}</p></div>`).join("");
+  $("rewriteTiming").textContent = `改稿 ${ms(ms_)}`;
+  $("stepRewrite").hidden = false;
+  $("stepRewrite").scrollIntoView({ behavior: "smooth", block: "start" });
+
+  state.log.push({
+    company: state.rec.job.c,
+    title: state.rec.job.t,
+    at: new Date().toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }),
+  });
+  saveLog();
+  renderLog();
+
+  $("btnCopyResume").onclick = () => copy(rw.text, "简历已复制");
+  $("btnCopyChanges").onclick = () => copy(M.changesText(rw), "改动说明已复制");
+}
+
+/* ---------------- events ---------------- */
+
+function wire() {
+  $("btnPick").onclick = () => $("file").click();
+  $("file").onchange = (e) => { takeFile(e.target.files[0]); e.target.value = ""; };
+
+  const drop = $("drop");
+  ["dragenter", "dragover"].forEach((ev) =>
+    drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach((ev) =>
+    drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", (e) => {
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    takeFile(f);
+  });
+
+  $("btnPaste").onclick = () => {
+    const t = $("paste").value || "";
+    if (t.trim().length < 40) { toast("再多粘一点，至少要有经历"); return; }
+    useResumeText(t, "", "粘贴的文字");
+  };
+
+  $("btnRewrite").onclick = doRewrite;
+  $("btnNext").onclick = () => { state.rank += 1; showRank(0); };
+  $("btnCopyRec").onclick = () => {
+    if (!state.rec) return;
+    copy(M.recommend(state.rec, state.ev, { resume: state.resume }), "推荐话术已复制");
+  };
+
+  $("btnData").onclick = () => $("dlgData").showModal();
+  $("btnPickData").onclick = () => $("fileData").click();
+  $("fileData").onchange = async (e) => {
+    const f = e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    const msg = $("dataMsg");
+    msg.textContent = "正在解析 " + f.name + " …";
+    msg.className = "data-msg";
+    try {
+      const ds = await D.fromWorkbook(f);
+      if (!D.saveCustom(ds)) {
+        msg.textContent = "浏览器存储空间不够，这次先用着，换台机器要重新导入。";
+        msg.className = "data-msg warn";
+      } else {
+        msg.textContent = `导入了 ${ds.jobs.length} 个岗位（${ds.meta.built}）。`;
+        msg.className = "data-msg ok";
+      }
+      applyDataset(ds, "custom");
+    } catch (err) {
+      msg.textContent = err.message || "导入失败";
+      msg.className = "data-msg warn";
+    }
+  };
+
+  $("btnResetData").onclick = async () => {
+    D.clearCustom();
+    const bundled = await D.loadBundled("data.jobs.json");
+    applyDataset(bundled, "bundled");
+    $("dataMsg").textContent = "已恢复内置数据。";
+    $("dataMsg").className = "data-msg ok";
+  };
+
+  $("btnResetLog").onclick = () => {
+    if (!confirm("清空推过岗的记录？清空后同一个公司可能会再推一次。")) return;
+    state.log = [];
+    saveLog();
+    renderLog();
+  };
+}
+
+/* ---------------- boot ---------------- */
+
+async function boot() {
+  document.body.classList.add("booting");
+  wire();
+  state.log = loadLog();
+  renderLog();
+  await bootDataset();
+}
+
+boot();

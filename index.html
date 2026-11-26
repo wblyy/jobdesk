@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>实习推荐 · 接待后台</title>
+<meta name="description" content="上传简历，10 秒内给出一个最合适的岗位和改好的简历。">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="top-inner">
+    <h1>实习推荐<span>接待后台</span></h1>
+    <div class="top-meta">
+      <span id="dbInfo">岗位库加载中…</span>
+      <button id="btnData" class="ghost" type="button">更换数据</button>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <!-- ============ 1. 简历 ============ -->
+  <section class="step" id="stepResume">
+    <div class="step-head">
+      <span class="num">1</span>
+      <h2>放进候选人简历</h2>
+      <span class="hint">PDF / Word / txt，或直接粘贴文字</span>
+    </div>
+
+    <div class="drop" id="drop">
+      <input type="file" id="file" accept=".pdf,.docx,.txt,.md,.html,.htm" hidden>
+      <p class="drop-main">把简历拖进来，或 <button class="link" id="btnPick" type="button">选择文件</button></p>
+      <p class="drop-sub">文件不会被上传，只在这台电脑上读</p>
+    </div>
+
+    <details class="paste-wrap" id="pasteWrap">
+      <summary>或者直接粘贴简历文字</summary>
+      <textarea id="paste" rows="10" placeholder="姓名、学校、专业、实习经历、项目经历、技能……原样粘过来就行"></textarea>
+      <button class="btn" id="btnPaste" type="button">用这段文字开始匹配</button>
+    </details>
+
+    <div id="resumeInfo" class="resume-info" hidden></div>
+  </section>
+
+  <!-- ============ 2. 推荐 ============ -->
+  <section class="step" id="stepMatch" hidden>
+    <div class="step-head">
+      <span class="num">2</span>
+      <h2>今天推这一个</h2>
+      <span class="hint" id="matchTiming"></span>
+    </div>
+
+    <article class="rec" id="rec"></article>
+
+    <div class="rec-actions">
+      <button class="btn primary" id="btnRewrite" type="button">生成改好的简历</button>
+      <button class="btn" id="btnNext" type="button">换下一个岗位</button>
+      <button class="btn" id="btnCopyRec" type="button">复制推荐话术</button>
+    </div>
+
+    <p class="alt-note" id="altNote"></p>
+  </section>
+
+  <!-- ============ 3. 改好的简历 ============ -->
+  <section class="step" id="stepRewrite" hidden>
+    <div class="step-head">
+      <span class="num">3</span>
+      <h2>改好的简历</h2>
+      <span class="hint" id="rewriteTiming"></span>
+    </div>
+
+    <div class="two">
+      <div class="pane">
+        <div class="pane-head">
+          <h3>简历正文</h3>
+          <button class="btn small" id="btnCopyResume" type="button">复制</button>
+        </div>
+        <pre class="resume-out" id="resumeOut"></pre>
+      </div>
+      <div class="pane">
+        <div class="pane-head">
+          <h3>动了什么</h3>
+          <button class="btn small" id="btnCopyChanges" type="button">复制</button>
+        </div>
+        <div class="changes" id="changesOut"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 记录 ============ -->
+  <section class="step compact" id="stepLog" hidden>
+    <div class="step-head">
+      <h2>这次接待推过</h2>
+      <span class="hint">这次接待里推过的公司会排到后面</span>
+    </div>
+    <ul class="log" id="logList"></ul>
+    <button class="link dim" id="btnResetLog" type="button">清空记录</button>
+  </section>
+
+</main>
+
+<!-- ============ 数据面板 ============ -->
+<dialog id="dlgData" class="dlg">
+  <form method="dialog" class="dlg-inner">
+    <h2>岗位库</h2>
+    <div id="dbDetail" class="db-detail"></div>
+
+    <div class="dlg-block">
+      <h3>换成新的 Excel</h3>
+      <p class="muted">表格里要有「岗位」「公司」「JD原文」三列，其余列沿用原来的规则。导进来只存在本机浏览器里。</p>
+      <input type="file" id="fileData" accept=".xlsx,.xls" hidden>
+      <button class="btn" id="btnPickData" type="button">选择 xlsx</button>
+      <p id="dataMsg" class="data-msg"></p>
+    </div>
+
+    <div class="dlg-foot">
+      <button class="btn" id="btnResetData" type="button">恢复内置数据</button>
+      <button class="btn primary" value="close" type="submit">关掉</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<!-- Parser libraries (~3 MB) are pulled in on first use, not at boot: the
+     operator usually opens this page just to check the database, and waiting
+     eight seconds for a PDF reader they may not need is the difference between
+     using the tool and not. -->
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
