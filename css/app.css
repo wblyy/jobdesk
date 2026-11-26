@@ -428,6 +428,15 @@ textarea:focus { outline: 2px solid var(--accent-weak); border-color: var(--acce
 
 .rec-caveat li { margin: 2px 0; }
 
+/* 判定依据：一句话交代这条分数是怎么来的，和"为什么推"分开——
+   前者是给运营核对用的，后者是发给候选人看的。 */
+.rec-basis {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: #a8a8a2;
+  letter-spacing: .01em;
+}
+
 .rec-actions {
   display: flex;
   gap: 10px;
@@ -512,6 +521,31 @@ textarea:focus { outline: 2px solid var(--accent-weak); border-color: var(--acce
   color: var(--ink-2);
   line-height: 1.65;
 }
+
+/* ---------------- verify (P6) ---------------- */
+
+.verify {
+  margin: 12px 14px 6px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.verify b { display: block; font-size: 12.5px; font-weight: 600; }
+
+.v-pass { background: var(--accent-weak); color: #1f5c40; }
+.v-note { background: #f8f5ec; color: #6f5a20; }
+.v-fail { background: #fdf0ee; color: #9c3b2a; border: 1px solid #f3d3ce; }
+
+.verify ul {
+  margin: 6px 0 0;
+  padding-left: 16px;
+}
+
+.verify li { margin: 2px 0; }
+.v-lost { color: var(--ink-3); }
+.v-lost-label { margin: 6px 0 0; font-size: 11.5px; color: var(--ink-3); }
 
 /* ---------------- log ---------------- */
 

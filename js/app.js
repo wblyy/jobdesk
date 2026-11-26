@@ -8,6 +8,7 @@ await import("./engine.js");
 await import("./dataset.js");
 await import("./parse.js");
 await import("./message.js");
+await import("./verify.js");
 
 const E = window.JDEngine;
 const D = window.JDData;
@@ -20,7 +21,9 @@ const SET_KEY = "jobdesk.settings.v1";
 
 const state = {
   ds: null,           // { meta, jobs }
-  jobs: [],           // indexed
+  jobs: [],           // indexed (starts as a prefix, fills in on idle)
+  pending: [],        // jobs not yet indexed
+  gen: 0,             // dataset generation, so a stale idle loop stops
   resume: null,       // parsed resume
   scored: [],         // sorted scores
   rank: 0,            // how far down the list the operator has clicked
@@ -105,17 +108,34 @@ async function bootDataset() {
   applyDataset(ds, custom ? "custom" : "bundled");
 }
 
-function applyDataset(ds, kind) {
+// Indexing is the one slow step (~1.5-2.5 s for 330 JDs). It is split so the
+// page is usable while it finishes: the first batch is indexed before the boot
+// screen lifts, the rest is filled in on idle. A candidate who arrives during
+// that window still gets a real recommendation from the first batch, and the
+// list quietly extends behind them instead of the page appearing hung.
+const FIRST_BATCH = 120;
+
+async function applyDataset(ds, kind) {
   const t0 = performance.now();
+  // Importing a new table while the old one is still indexing would interleave
+  // two datasets in one array. Each build carries a generation number; a stale
+  // idle loop sees it and stops.
+  const gen = (state.gen || 0) + 1;
+  state.gen = gen;
   state.ds = ds;
-  state.jobs = ds.jobs.map((j) => E.indexJob(j));
+  const all = ds.jobs;
+
+  const slice = all.slice(0, FIRST_BATCH);
+  state.jobs = slice.map((j) => E.indexJob(j));
+  state.pending = all.slice(FIRST_BATCH);
   const ms_ = performance.now() - t0;
+
   const m = ds.meta || {};
   $("dbInfo").textContent = `${m.count || ds.jobs.length} 个岗位 · ${m.built || "—"}${kind === "custom" ? " · 自建" : ""}`;
   $("dbDetail").innerHTML = `
     <p><b>${esc(m.name || "岗位库")}</b></p>
     <p class="muted">${m.count || ds.jobs.length} 个岗位 ｜ 数据日期 ${esc(m.built || "未标注")} ｜ 来源 ${esc(m.source || "内置")}</p>
-    <p class="muted">已建立索引 ${ms(ms_)}</p>
+    <p class="muted">已建索引 ${state.jobs.length} / ${all.length} 个岗位（${ms(ms_)}），其余空档时间补上</p>
     <p class="muted">${kind === "custom" ? "正在用你自己导入的表格。" : "正在用随包附带的表格。"}</p>`;
   saveSettings({ datasetKind: kind });
   state.ready = true;
@@ -126,6 +146,33 @@ function applyDataset(ds, kind) {
   $("stepRewrite").hidden = true;
   document.body.classList.remove("booting");
   if (state.resume) runMatch();
+  indexRest(gen);
+}
+
+// Fill in the remaining jobs without blocking the first screen.
+function indexRest(gen) {
+  if (!state.pending || !state.pending.length) return;
+  const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 80));
+  const step = () => {
+    if (state.gen !== gen) return; // a newer table replaced this one
+    const t0 = performance.now();
+    // ~12 ms per slice keeps frames smooth on a phone; the whole rest takes
+    // about six slices.
+    while (state.pending.length && performance.now() - t0 < 12) {
+      state.jobs.push(E.indexJob(state.pending.shift()));
+    }
+    if (state.pending.length) {
+      idle(step, { timeout: 200 });
+    } else if (state.resume && !state.rw && state.rank === 0) {
+      // A resume that arrived mid-index was matched against a partial list.
+      // Re-running is ~0.4 s and can only improve the answer — but only while
+      // the operator is still on the first card. Swapping the recommendation
+      // under someone who is already reading it is worse than a slightly
+      // narrower shortlist.
+      runMatch();
+    }
+  };
+  idle(step, { timeout: 200 });
 }
 
 /* ---------------- resume ---------------- */
@@ -276,8 +323,10 @@ function renderRec(sc, ev) {
   if (sched) meta.push(sched);
   meta.push(M.salaryText(j));
 
-  const tier = sc.fit >= 0.75 ? "很对口" : sc.fit >= 0.6 ? "比较对口" : sc.fit >= 0.45 ? "可以试试" : "勉强";
-  const tierClass = sc.fit >= 0.75 ? "t-a" : sc.fit >= 0.6 ? "t-b" : sc.fit >= 0.45 ? "t-c" : "t-d";
+  // 档位直接来自 P3 的区间判定，不再另设阈值——两套阈值迟早会对不上，
+  // 运营看到"很对口"却在下面读到"缺关键硬门槛"就不信这个工具了。
+  const tier = sc.band;
+  const tierClass = sc.score >= 85 ? "t-a" : sc.score >= 65 ? "t-b" : sc.score >= 45 ? "t-c" : "t-d";
 
   const evHtml = ev.map((e) => `
     <li>
@@ -291,6 +340,14 @@ function renderRec(sc, ev) {
   const caveats = (sc.caveats || []).length
     ? `<ul class="rec-caveat">${sc.caveats.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>` : "";
 
+  // 判定依据：运营被候选人问"为什么是这个"时，要能一句话答上来。
+  const dutyHit = sc.duties.length
+    ? `核心职责 ${sc.duties.filter((d) => d.state !== "MISS").length}/${sc.duties.length} 条对得上`
+    : "JD 没写清职责";
+  const gateMiss = sc.gates.filter((g) => g.state === "MISS");
+  const whyBits = [sc.reason, dutyHit];
+  if (gateMiss.length) whyBits.push("硬门槛没过 " + gateMiss.length + " 条");
+
   $("rec").innerHTML = `
     <div class="rec-top">
       <div>
@@ -300,7 +357,8 @@ function renderRec(sc, ev) {
       <span class="tier ${tierClass}">${tier}</span>
     </div>
     <p class="rec-meta">${esc(meta.join(" ｜ "))}</p>
-    <p class="rec-why"><b>为什么是它</b>${esc(M.whyLine(sc))}</p>
+    <p class="rec-why"><b>为什么是它</b>${esc(M.whyLine(sc, ev))}</p>
+    <p class="rec-basis">${esc(whyBits.join("　·　"))}</p>
     ${j.loc ? `<p class="rec-addr">${esc(j.loc)}</p>` : ""}
     ${evHtml ? `<ul class="ev">${evHtml}</ul>` : `<p class="muted">JD 里没有能和你简历直接对上的一句。这条只能算方向对，推荐时别把话说满。</p>`}
     ${miss}
@@ -317,7 +375,9 @@ function doRewrite() {
   const ms_ = performance.now() - t0;
   state.rw = rw;
   $("resumeOut").textContent = rw.text;
-  $("changesOut").innerHTML = rw.changes.map((c) =>
+  // 自检结果放最上面。这个面板有 62vh 的滚动区，放在七条改动说明下面，
+  // 运营永远不会往下滚到它——那等于没做这个自检。
+  $("changesOut").innerHTML = verifyHtml(rw.verify) + rw.changes.map((c) =>
     `<div class="chg"><b>${esc(c.k)}</b><p>${esc(c.v)}</p></div>`).join("");
   $("rewriteTiming").textContent = `改稿 ${ms(ms_)}`;
   $("stepRewrite").hidden = false;
@@ -333,6 +393,36 @@ function doRewrite() {
 
   $("btnCopyResume").onclick = () => copy(rw.text, "简历已复制");
   $("btnCopyChanges").onclick = () => copy(M.changesText(rw), "改动说明已复制");
+}
+
+// P6 的结果单独一块。改稿说自己没问题不算证据，这里显示的是机械核对的结果：
+// 公司名/时间/数字/每条原经历的归宿。有问题就挡在前面，不埋在正文里。
+function verifyHtml(v) {
+  if (!v) return "";
+  const ok = v.verdict === "PASS";
+  const cls = ok ? "v-pass" : v.verdict === "PASS_WITH_NOTES" ? "v-note" : "v-fail";
+  const head = {
+    PASS: "自检通过：公司名、起止时间、数字、每条原经历都对得上。",
+    PASS_WITH_NOTES: "自检通过，有几处被压缩过，自己看一眼。",
+    FAIL: "自检没过——这些地方不要直接发出去。",
+    FAIL_UNVERIFIED: "自检无法完成——改稿内容太少。",
+  }[v.verdict] || v.verdict;
+  const bad = (v.blocked || []).slice(0, 6).map((b) => `<li>${esc(b)}</li>`).join("");
+  const notes = (v.notes || []).slice(0, 3).map((b) => `<li>${esc(b)}</li>`).join("");
+  const lost = (v.rows || []).filter((r) => r.verdict !== "保留" && r.verdict !== "段落保留·条目略").slice(0, 4)
+    .map((r) => `<li><s>${esc(clip(r.orig, 40))}</s></li>`).join("");
+  return `
+    <div class="verify ${cls}">
+      <b>${esc(head)}</b>
+      ${bad ? `<ul class="v-bad">${bad}</ul>` : ""}
+      ${notes ? `<ul class="v-note-list">${notes}</ul>` : ""}
+      ${lost ? `<p class="v-lost-label">没有完整保留的原条目：</p><ul class="v-lost">${lost}</ul>` : ""}
+    </div>`;
+}
+
+function clip(s, n) {
+  s = String(s || "").replace(/\s+/g, " ").trim();
+  return s.length > n ? s.slice(0, n) + "…" : s;
 }
 
 /* ---------------- events ---------------- */

@@ -12,7 +12,16 @@ const ctx = vm.createContext(win);
 win.window = win;
 ctx.window = win;
 vm.runInContext(fs.readFileSync(path.join(root, "js/engine.js"), "utf8"), ctx);
+vm.runInContext(fs.readFileSync(path.join(root, "js/verify.js"), "utf8"), ctx);
+vm.runInContext(fs.readFileSync(path.join(root, "js/message.js"), "utf8"), ctx);
 const E = win.JDEngine;
+const V = win.JDVerify;
+const M = win.JDMessage;
+
+// The output is read by a human deciding whether to send it, so "it renders" is
+// not a pass condition. These are the things that have actually gone wrong.
+const fails = [];
+function fail(where, msg) { fails.push(where + ": " + msg); }
 
 const data = JSON.parse(fs.readFileSync(path.join(root, "data.jobs.json"), "utf8"));
 const t0 = performance.now();
@@ -172,4 +181,58 @@ for (const [key, text] of Object.entries(resumes)) {
   const rw = E.rewrite(res, top[0].job, ev);
   console.log("  -- rewritten resume (first 900 chars):\n" + rw.text.slice(0, 900));
   console.log("  -- changes:", rw.changes.map((c) => c.k).join(" | "), "| missing:", rw.missing.join(","));
+
+  // ---- assertions ----
+  const href = (res, sc) => {
+    const rws = E.rewrite(res, sc.job, E.explain(res, sc, 3));
+    return rws;
+  };
+  const v = rw.verify || V.check(res, rw.text, { job: top[0].job });
+  console.log("  -- P6:", v.verdict, v.blocked.length ? "\n     ! " + v.blocked.join("\n     ! ") : "");
+  if (v.verdict === "FAIL" || v.verdict === "FAIL_UNVERIFIED") fail(key, "P6 " + v.verdict);
+
+  const hit = (rw.text.split("【个人定位】")[1] || "").split("【个人优势】")[0].trim();
+  if (!hit) fail(key, "没有命中句");
+  if (!hit.includes("做过「")) fail(key, "命中句没有落在具体经历上");
+  // 只检查命中句里的引文：别处的「SQL」「产品经理」是概念标签，本来就短。
+  // 「…详情页 A+」是合格收尾，「…Python」是被切掉的后半截产品名。
+  for (const m of hit.matchAll(/「([^」]*)」/g)) {
+    const q = m[1];
+    if (/[A-Za-z]$/.test(q) && !/^[A-Za-z]+$/.test(q) && q.length > 3) fail(key, "引文切在英文词中间: " + q);
+    if (/[(（][^)）]*$/.test(q)) fail(key, "引文括号没闭合: " + q);
+    if (q.length < 6) fail(key, "引文太短: " + q);
+  }
+  // 同一份简历推两个岗位，命中句不能是同一句换了个公司名
+  if (top[1]) {
+    const rw2 = E.rewrite(res, top[1].job, E.explain(res, top[1], 3));
+    const hit2 = (rw2.text.split("【个人定位】")[1] || "").split("【个人优势】")[0].trim();
+    if (hit === hit2) fail(key, "两个岗位的命中句一字不差");
+  }
+
+  const msg = M.recommend(top[0], ev, { resume: res });
+  const lines = msg.split("\n");
+  const longest = Math.max(...lines.map((l) => [...l].length));
+  console.log("  -- message: " + lines.length + " lines, longest " + longest + " chars");
+  if (lines.length > 14) fail(key, "推送话术 " + lines.length + " 行，手机上放不下一屏");
+  if (longest > 34) fail(key, "推送话术最长一行 " + longest + " 字，会折行");
+  if (!msg.includes(top[0].job.c)) fail(key, "推送话术里没有公司名");
+  if (/概率|大概率|很可能|基本能|稳/.test(msg)) fail(key, "推送话术出现概率措辞");
+
+  // Reuse test: the argument block must not be transferable to the next job.
+  const second = scored[1];
+  if (second) {
+    const msg2 = M.recommend(second, E.explain(res, second, 3), { resume: res });
+    const why1 = lines.find((l) => l.startsWith("为什么推这个"));
+    const why2 = msg2.split("\n").find((l) => l.startsWith("为什么推这个"));
+    if (why1 && why1 === why2) fail(key, "两个岗位的「为什么推」一字不差，等于群发");
+  }
+}
+
+console.log("\n" + "=".repeat(78));
+if (fails.length) {
+  console.log("FAILED (" + fails.length + ")");
+  for (const f of fails) console.log("  x " + f);
+  process.exitCode = 1;
+} else {
+  console.log("ALL FIXTURES PASS");
 }
