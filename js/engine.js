@@ -315,43 +315,57 @@
   }
 
   function roleAlignment(res, job) {
-    const roleIds = new Set();
-    for (const id of job._titleVec.keys()) if (isRole(id)) roleIds.add(id);
-    for (const [id, w] of job._jdVec) if (isRole(id) && w > 0.25) roleIds.add(id);
+    const titleRoles = [...job._titleVec.keys()].filter(isRole);
+    // Roles the JD body mentions that the title does not — these are adjacent
+    // work (a "UI 实习生" post that also asks for video editing), not the job
+    // itself, so they inform the score without defining it.
+    const bodyRoles = [];
+    for (const [id, w] of job._jdVec) {
+      if (!isRole(id) || w <= 0.25 || job._titleVec.has(id)) continue;
+      bodyRoles.push([id, Math.min(1, w)]);
+    }
     // A job that never names a role is not a proven match for anyone. Scoring it
     // at a neutral 0.55 let vague postings ("开发实习生(侧重.net开发)") outrank
     // real ones purely on incidental skill overlap, so unknown families sit lower.
-    if (!roleIds.size) {
+    if (!titleRoles.length && !bodyRoles.length) {
       return { r: 0.35, matched: null, missed: null, titleFit: null, titleRoles: [] };
     }
 
-    let num = 0, den = 0;
+    // The title is the employer's own name for the job. Averaging it into a pile
+    // of adjacent roles lost that: a "UI实习生" post that also mentions 前端 and
+    // 数据标注 scored the same as one that did not, and a designer's best
+    // on-target job fell below an illustration ad. Title fit leads; body roles
+    // only adjust.
+    const titleFit = titleRoles.length
+      ? Math.max(...titleRoles.map((id) => roleCredit(res, id)))
+      : null;
+
+    let bodyR = null;
+    if (bodyRoles.length) {
+      let num = 0, den = 0;
+      for (const [id, w] of bodyRoles) { num += w * roleCredit(res, id); den += w; }
+      bodyR = den ? num / den : null;
+    }
+
+    let r;
+    if (titleFit !== null && bodyR !== null) r = 0.8 * titleFit + 0.2 * bodyR;
+    else if (titleFit !== null) r = titleFit;
+    else r = bodyR;
+
     let best = null, worst = null;
-    for (const id of roleIds) {
-      // title roles matter far more than a role word buried in the JD body
-      const w = job._titleVec.has(id) ? 3 : 1;
-      den += w;
-      const got = roleCredit(res, id);
-      num += w * got;
-      if (job._titleVec.has(id)) {
-        if (got >= 0.5) { if (!best) best = id; } else if (!worst) worst = id;
-      }
+    for (const id of titleRoles) {
+      if (roleCredit(res, id) >= 0.5) { if (!best) best = id; } else if (!worst) worst = id;
     }
 
     // A job whose title names a role this candidate never claims is not a match,
     // no matter how many skills overlap. Without this, "Java 实习生" scored well
     // for a designer because both mentioned collaborative tooling.
-    const titleRoles = [...job._titleVec.keys()].filter(isRole);
-    let offTarget = 0;
-    if (titleRoles.length) {
-      offTarget = Math.max(...titleRoles.map((id) => roleCredit(res, id)));
-    } else if (res.roleVec.size) {
-      // untitled/unclear job: fall back to judging by the JD's main roles
-      const jdRoles = [...job._jdVec.keys()].filter((id) => isRole(id) && job._jdVec.get(id) > 0.4);
-      offTarget = jdRoles.length ? Math.max(...jdRoles.map((id) => roleCredit(res, id))) : 0.5;
+    let offTarget = titleFit;
+    if (offTarget === null) {
+      offTarget = res.roleVec.size ? (bodyR === null ? 0.5 : bodyR) : 0.5;
     }
 
-    return { r: den ? num / den : 0.5, matched: best, missed: worst, titleFit: offTarget, titleRoles };
+    return { r, matched: best, missed: worst, titleFit: offTarget, titleRoles };
   }
 
   function scoreJob(res, job) {
@@ -418,8 +432,17 @@
   function cleanClause(t) {
     return t
       .replace(/^\d+[.、)）]\s*/, "")
+      // Splitting on ?/! leaves the previous clause's closing quote and the next
+      // bullet's dash at the head of this one: `” - 喜欢 MakeThings:除了 Figma…`.
+      .replace(/^["'“”‘’()（）\[\]【】\s\-—–·、,，。；;:：]+/, "")
       // scraping leaves the next section's heading glued to the end of a clause
       .replace(/(职位要求|岗位要求|任职要求|岗位职责|工作内容|职位描述)\s*[:：]?\s*$/, "")
+      // scraped JDs mix half-width punctuation into Chinese text; in WeChat it
+      // reads as copied source code rather than a sentence
+      .replace(/([一-龥])\s*[,，]\s*/g, "$1，")
+      .replace(/([一-龥])\s*[;；]\s*/g, "$1；")
+      // a colon followed by Chinese is a colon, not a URL scheme or a ratio
+      .replace(/\s*:\s*(?=[一-龥])/g, "：")
       .replace(/\s+/g, " ")
       .trim();
   }
@@ -455,9 +478,15 @@
   // Quoting it as a requirement makes the whole match look machine-generated.
   const BOILERPLATE_RE = /(日薪|时薪|薪资|工资|待遇|福利|补贴|转正|编制|招\s*\d+\s*人|急招|简历投递|工作地点|办公地址|地铁|简历请|联系方式)/;
 
+  // Eligibility lines ("专业不限,视觉设计、数字媒体…背景都可以") list who may
+  // apply, not what the job needs done. Quoting one as proof of fit is the single
+  // most obviously machine-generated thing this tool could do.
+  const ELIGIBILITY_RE = /(专业不限|学历不限|不限专业|相关专业优先|专业优先|应届生|实习生都欢迎|本科在读|本科及以上在读|在读学生|毕业时间|投递时|欢迎告诉)/;
+
   function isBoilerplate(t) {
     const s = String(t);
     if (BOILERPLATE_RE.test(s)) return true;
+    if (ELIGIBILITY_RE.test(s)) return true;
     // "岗位日薪:150-200区间,奖金另算;" — mostly digits and pay words
     const digits = (s.match(/\d/g) || []).length;
     return digits > s.length * 0.3;

@@ -33,8 +33,13 @@
     const E = root.JDEngine;
     const labels = [];
     const seen = new Set();
-    for (const h of (sc.hits || [])) {
-      if (!WHY_CATS.has(E.CAT.get(h.id))) continue;
+    // Heaviest overlap first: hits arrive in JD reading order, so the first one
+    // is not the strongest claim. A weak method word ("视觉产出") would otherwise
+    // outrank the tool the JD actually names.
+    const ranked = (sc.hits || [])
+      .filter((h) => WHY_CATS.has(E.CAT.get(h.id)))
+      .sort((a, b) => b.w - a.w);
+    for (const h of ranked) {
       const l = E.LABEL.get(h.id);
       if (!l || seen.has(l)) continue;
       seen.add(l);

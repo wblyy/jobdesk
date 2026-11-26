@@ -132,7 +132,11 @@ function applyDataset(ds, kind) {
 
 async function takeFile(file) {
   if (!file) return;
-  toast("正在读取 " + file.name);
+  const ext = (file.name || "").toLowerCase().split(".").pop();
+  // First PDF/Word of the session downloads its reader (~1.5-4 MB); say so, or
+  // the operator concludes the tool hung and closes the tab.
+  const cold = !R.ready(ext);
+  toast(cold ? "第一次读 " + ext.toUpperCase() + "，要下个解析组件，稍等" : "正在读取 " + file.name, cold ? 8000 : 2200);
   try {
     const out = await R.extract(file);
     useResumeText(out.text, out.warning, file.name);
@@ -198,6 +202,32 @@ function byBest(a, b) {
   return (b.job.act || 0) - (a.job.act || 0);
 }
 
+// Among near-equal scores, prefer the one we can actually explain. A vacancy
+// whose JD is two lines of boilerplate can outscore a real one on paper and
+// still leave the operator with nothing to say to the candidate. Looking two
+// places down costs ~2 ms and never skips past a material score gap
+// (LOOKAHEAD_GAP), so this reorders neighbours, it does not override the ranking.
+const LOOKAHEAD = 3;
+const LOOKAHEAD_GAP = 0.05;
+
+function chooseAt(list, rank) {
+  const top = list[rank];
+  if (!top) return null;
+  let best = null;
+  const end = Math.min(list.length, rank + LOOKAHEAD);
+  for (let i = rank; i < end; i++) {
+    const sc = list[i];
+    if (top.fit - sc.fit > LOOKAHEAD_GAP && i > rank) break;
+    const t0 = performance.now();
+    const ev = E.explain(state.resume, sc, 3);
+    const evMs = performance.now() - t0;
+    const solid = ev.some((e) => e.role || E.CAT.get(e.concept) === "skill" || E.CAT.get(e.concept) === "method");
+    if (!best) best = { sc, ev, evMs, at: i, solid };
+    if (solid) return { sc, ev, evMs, at: i };
+  }
+  return best;
+}
+
 // Company recently pushed in this session goes to the back, so two days in a row
 // do not land on the same employer.
 function recentlyPushed(job) {
@@ -214,11 +244,14 @@ function showRank(ms_) {
       return byBest(a, b);
     });
   }
-  const sc = list[state.rank] || list[0];
-  if (!sc) return;
-  const t0 = performance.now();
-  const ev = E.explain(state.resume, sc, 3);
-  const evMs = performance.now() - t0;
+  const pick = chooseAt(list, state.rank);
+  if (!pick) return;
+  // If the picker skipped a vacancy with nothing to say, continue from where it
+  // landed — otherwise "换下一个" walks back into the one just skipped.
+  state.rank = pick.at;
+  const sc = pick.sc;
+  const ev = pick.ev;
+  const evMs = pick.evMs;
   state.rec = sc;
   state.ev = ev;
   state.rw = null;
@@ -374,12 +407,24 @@ function wire() {
 
 /* ---------------- boot ---------------- */
 
+// PDF is the format candidates actually send. Downloading its reader while the
+// page sits idle turns the first upload from 7 s into half a second. Skipped on
+// metered or slow connections, where the download costs more than it saves.
+function prefetchPdf() {
+  const c = navigator.connection || {};
+  if (c.saveData) return;
+  if (c.effectiveType && /(^|-)2g$/.test(c.effectiveType)) return;
+  const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 1500));
+  idle(() => { R.ensure.pdf().catch(() => { /* first upload will retry */ }); }, { timeout: 4000 });
+}
+
 async function boot() {
   document.body.classList.add("booting");
   wire();
   state.log = loadLog();
   renderLog();
   await bootDataset();
+  prefetchPdf();
 }
 
 boot();

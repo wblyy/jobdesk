@@ -11,7 +11,7 @@ export const LEX = [
   ["pm_b", "B端产品", "role", ["b端产品", "tob产品", "saas产品", "后台产品", "管理后台", "中台产品"], "pm"],
   ["pm_growth", "增长产品", "role", ["增长产品", "增长黑客", "用户增长产品"], "pm"],
   ["ops", "运营", "role", ["运营实习生", "运营岗", "运营助理", "运营专员", "日常运营", "运营策略"], null],
-  ["ops_content", "内容运营", "role", ["内容运营", "内容策划", "文案撰写", "文案", "新媒体运营", "公众号", "内容生态", "选题"], "ops"],
+  ["ops_content", "内容运营", "role", ["内容运营", "内容策划", "文案撰写", "文案", "新媒体运营", "新媒体内容", "新媒体", "公众号", "内容生态", "选题"], "ops"],
   ["ops_user", "用户运营", "role", ["用户运营", "社群运营", "私域", "会员运营", "用户分层", "私域流量"], "ops"],
   ["ops_ec", "电商运营", "role", ["电商运营", "店铺运营", "天猫运营", "京东运营", "淘系", "拼多多运营", "网店运营"], "ops"],
   ["ops_live", "直播运营", "role", ["直播运营", "直播间", "主播", "场控", "跟播", "开播", "带货"], "ops"],
@@ -22,7 +22,7 @@ export const LEX = [
   ["ops_activity", "活动运营", "role", ["活动运营", "活动策划", "策划活动", "campaign"], "ops"],
   ["ops_platform", "平台运营", "role", ["平台运营", "商家运营", "类目运营", "招商", "渠道运营"], "ops"],
   ["ops_supply", "供给/商家运营", "role", ["供给", "商家拓展", "bd商家", "货源"], "ops_platform"],
-  ["data_ana", "数据分析", "role", ["数据分析", "业务分析", "经营分析", "数据运营", "bi分析", "指标体系", "数据洞察", "fde"], null],
+  ["data_ana", "数据分析", "role", ["数据分析", "数据实习生", "业务分析", "经营分析", "数据运营", "bi分析", "指标体系", "数据洞察", "fde"], null],
   ["data_eng", "数据开发", "role", ["数据开发", "数仓", "数据工程", "etl", "数据管线", "数据pipeline", "数据链路"], null],
   ["data_label", "数据标注采集", "role", ["数据标注", "数据采集", "数采", "标注", "数据清洗", "打标"], null],
   ["algo", "算法", "role", ["算法实习生", "算法工程", "机器学习", "深度学习", "模型训练", "算法优化"], null],
@@ -62,7 +62,7 @@ export const LEX = [
   ["ppt", "PPT/汇报材料", "skill", ["ppt", "powerpoint", "keynote", "汇报材料", "可视化报告"]],
   ["figma", "Figma", "skill", ["figma", "sketch", "mastergo", "即时设计"]],
   ["prototype", "原型工具", "skill", ["axure", "墨刀", "processon", "xmind", "原型图", "原型设计", "流程图"]],
-  ["adobe", "Adobe/剪辑软件", "skill", ["photoshop", "illustrator", "after effects", "premiere", "pr剪辑", "ae动效", "剪映", "capcut", "达芬奇", "lightroom"]],
+  ["adobe", "设计/剪辑软件", "skill", ["ps", "photoshop", "illustrator", "after effects", "premiere", "pr剪辑", "ae动效", "剪映", "capcut", "达芬奇", "lightroom"]],
   ["bi", "BI/埋点", "skill", ["tableau", "powerbi", "power bi", "finebi", "quickbi", "神策", "growingio", "埋点", "数据看板"]],
   ["bigdata", "大数据组件", "skill", ["spark", "flink", "hadoop", "kafka", "hbase", "doris", "hive", "dataworks", "maxcompute"]],
   ["ml", "机器学习", "skill", ["pytorch", "tensorflow", "sklearn", "scikit-learn", "xgboost", "lightgbm", "transformer", "神经网络"]],
@@ -109,20 +109,24 @@ export const LEX = [
   ["m_compete", "竞品/行业研究", "method", ["竞品分析", "竞品", "行业研究", "mapping", "市场调研", "行业分析", "调研报告"]],
   ["m_prd", "PRD/需求", "method", ["prd", "需求文档", "用户故事", "需求分析", "需求评审", "验收标准", "需求拆解"]],
   ["m_flow", "流程/原型", "method", ["流程图", "信息架构", "交互稿", "wireframe", "页面结构", "信息结构"]],
+  // Game design vocabulary. Without it a 游戏策划 match has no method-level
+  // evidence to quote, and the tool falls back to "方向对，细节自己说" for a
+  // candidate who literally designed 120 张卡牌 and 3 套成长曲线.
+  ["m_game_design", "玩法与系统设计", "method", ["数值设计", "系统设计", "系统拆解", "关卡设计", "玩法设计", "成长曲线", "战斗逻辑", "策划文档", "卡牌设计", "内测"]],
   ["m_ana", "数据分析方法", "method", ["数据复盘", "指标体系", "漏斗", "留存", "转化分析", "归因", "数据看板", "数据监控", "数据洞察"]],
   ["m_ab", "A/B实验", "method", ["a/b测试", "abtest", "ab test", "实验设计", "灰度", "实验组"]],
   ["m_growth", "增长方法", "method", ["拉新", "促活", "裂变", "私域运营", "社群运营", "留存提升", "用户分层"]],
   ["m_content", "内容方法", "method", ["选题", "脚本", "爆款", "账号运营", "涨粉", "内容规划", "选题会", "内容矩阵"]],
   ["m_camp", "活动策划", "method", ["活动策划", "活动执行", "策划方案", "活动落地", "线下活动"]],
   ["m_ad", "投放优化", "method", ["素材优化", "出价", "roi", "cpa", "ctr", "信息流投放", "投放策略", "账户优化"]],
-  ["m_ec_ops", "店铺运营方法", "method", ["上架", "选品", "标题优化", "详情页", "主图", "评价管理", "补货", "库存", "活动报名", "直通车"]],
+  ["m_ec_ops", "店铺运营方法", "method", ["上架", "选品", "标题优化", "评价管理", "补货", "库存", "活动报名", "直通车"]],
   ["m_test", "测试方法", "method", ["测试用例", "接口测试", "性能测试", "回归测试", "缺陷跟踪", "自动化脚本", "冒烟测试"]],
   ["m_dev", "工程实践", "method", ["代码review", "单元测试", "性能优化", "架构设计", "技术方案", "问题排查", "重构", "上线"]],
   ["m_mlops", "模型工程", "method", ["模型评估", "推理优化", "量化", "模型部署", "评测", "数据清洗", "打标", "训练 pipeline"]],
   ["m_proj", "项目管理", "method", ["项目管理", "跨部门", "多线程", "排期", "协同", "推进落地", "需求管理"]],
   ["m_doc", "文档与协作", "method", ["文档整理", "会议纪要", "资料整理", "知识库"]],
   ["m_review", "复盘汇报", "method", ["复盘", "汇报", "周报", "分析报告", "总结"]],
-  ["m_visual", "视觉产出", "method", ["海报", "banner", "主视觉", "排版", "配色", "设计规范", "视觉稿"]],
+  ["m_visual", "视觉产出", "method", ["海报", "banner", "主视觉", "排版", "配色", "设计规范", "视觉稿", "详情页", "主图"]],
   ["m_shoot", "拍摄制作", "method", ["拍摄", "运镜", "调色", "字幕", "混剪", "布光"]],
   ["m_data_gen", "数据生产", "method", ["数据生产", "数据合成", "数据构造", "语料", "标注规范", "数据质量"]],
   ["m_ba", "业务分析", "method", ["业务分析", "流程梳理", "业务调研", "需求收集", "痛点分析"]],
@@ -179,6 +183,15 @@ for (const [id, label, cat, aliases] of LEX) {
 // ascii letter or digit, by char code (no string/regex allocation in the hot loop)
 const isAlnum = (c) => (c >= 97 && c <= 122) || (c >= 48 && c <= 57);
 
+// "PS、AI" / "AI/PS" in a designer's skill list is Adobe Illustrator, not
+// artificial intelligence. Left alone, every design resume reads as an AI
+// candidate, and the tool quotes that back as proof of fit.
+const ADOBE_BEFORE = /(?:^|[^a-z])(ps|id|adobe)[\s、\/,，和及]*$/;
+function isAdobeAI(text, s, e, id) {
+  if (id !== "d_ai" || e - s !== 2) return false;
+  return ADOBE_BEFORE.test(text.slice(Math.max(0, s - 5), s).toLowerCase());
+}
+
 /**
  * Scan text for concepts. Returns Map<id, {count, hits: string[]}>
  * Longest-match-wins: once a longer alias consumes a span, shorter overlapping
@@ -226,9 +239,13 @@ export function scan(text, opts = {}) {
     }
     if (bestEnd > i) {
       if (wantSpans) {
-        for (const id of bestIds) spans.push({ id, s: i, e: bestEnd });
+        for (const id of bestIds) {
+          if (isAdobeAI(low, i, bestEnd, id)) continue;
+          spans.push({ id, s: i, e: bestEnd });
+        }
       } else {
         for (const id of bestIds) {
+          if (isAdobeAI(low, i, bestEnd, id)) continue;
           const rec = found.get(id) || { count: 0, hits: [] };
           rec.count += 1;
           if (wantHits && rec.hits.length < maxHits) {

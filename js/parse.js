@@ -27,6 +27,15 @@
     xlsx: () => loadScript("js/vendor/xlsx.full.min.js"),
   };
 
+  // Is this file type's parser already in memory? The first PDF of a session
+  // pays a ~1.5 MB download; the caller says so instead of looking frozen.
+  function ready(kind) {
+    if (kind === "pdf") return !!root.pdfjsLib;
+    if (kind === "docx") return !!root.mammoth;
+    if (kind === "xlsx") return !!root.XLSX;
+    return true;
+  }
+
   async function fromPdf(file) {
     const buf = new Uint8Array(await file.arrayBuffer());
     const pdf = await root.pdfjsLib.getDocument({ data: buf, useWorkerFetch: false, isEvalSupported: false }).promise;
@@ -121,5 +130,5 @@
     return { text: t, kind, warning };
   }
 
-  root.JDResume = { extract, ensure };
+  root.JDResume = { extract, ensure, ready };
 })(window);
